@@ -21,7 +21,7 @@ jobs:
       - name: Setup SSH Connection
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.GITHUB_DEPLOY_KEY }}
 
       - name: Add External Server to Known Hosts
         run: |
