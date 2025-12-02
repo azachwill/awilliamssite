@@ -1,17 +1,17 @@
 # .github/workflows/cert_renewal.yml
-name: 'Bi-Weekly Let''s Encrypt Renewal Check'
+name: "Bi-Weekly Let's Encrypt Renewal Check"
 
 on:
-  # CRON Schedule: Runs every other Sunday at 3:00 AM UTC (0 3 * * 0/2)
   schedule:
-    - cron: '0 3 * * 0/2'
+    # Runs every 14 days at 03:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
-  # --- Replace these variables ---
-  SSH_USER: ubuntu             # or ec2-user, centos, etc.
-  SSH_HOST: 3.236.254.88      # The public IP or hostname of your external server
+  SSH_USER: ubuntu
+  SSH_HOST: 3.236.254.88
   EMAIL_RECIPIENT: andrewwilliams1275@gmail.com
-  SERVER_DOMAIN: andrewwilliams.website # Domain the certificate covers
+  SERVER_DOMAIN: andrewwilliams.website
 
 jobs:
   run-renewal-script:
@@ -21,43 +21,43 @@ jobs:
       - name: Setup SSH Connection
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          # Load the Private Key from the GitHub Secret
           ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-          
+
       - name: Add External Server to Known Hosts
-        # This is essential to prevent SSH security prompts
         run: |
+          mkdir -p ~/.ssh
           ssh-keyscan ${{ env.SSH_HOST }} >> ~/.ssh/known_hosts
 
       - name: Execute Remote Renewal and Email Script
         run: |
-          # The full command to execute on the remote server via SSH
-          # The outer EOF is the delimiter for the SSH command input
+          # Simplified SSH command
           ssh ${{ env.SSH_USER }}@${{ env.SSH_HOST }} 'bash -s' << 'EOF'
+            
+            # --- Inject GitHub/YAML Environment Variables into Shell ---
+            SERVER_DOMAIN="${{ env.SERVER_DOMAIN }}"
+            EMAIL_RECIPIENT="${{ env.EMAIL_RECIPIENT }}"
             
             # --- 1. Attempt Renewal ---
             sudo certbot renew --quiet --post-hook "systemctl reload apache2 || systemctl reload nginx"
             
             # --- 2. Check and Email Report ---
+            # Capture the return code of certbot immediately if needed, 
+            # but usually we check if the file changed or logs updated.
             
-            if [ $? -eq 0 ]; then
-                RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" /var/log/letsencrypt/letsencrypt.log | tail -n 1)
+            # Grepping the log for specific success message
+            RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" /var/log/letsencrypt/letsencrypt.log | tail -n 1)
 
-                if [ -n "$RENEWAL_SUCCESS" ]; then
-                    
-                    # Send Email using the system mail client
-                    # The MAIL_EOF delimiter MUST be flush left relative to the script body
-                    /usr/bin/mail -s "SUCCESS: Let''s Encrypt Certificate Renewed for $SERVER_DOMAIN" \
-                        "${EMAIL_RECIPIENT}" <<MAIL_EOF
-The automated renewal process completed successfully.
-Certificate Renewed: $SERVER_DOMAIN
-Date: $(date)
-Full Log Message: $RENEWAL_SUCCESS
-MAIL_EOF
-                else
-                    echo "Renewal check OK. No renewal was necessary at this time."
-                fi
+            if [ -n "$RENEWAL_SUCCESS" ]; then
+                
+                # --- CORRECTED BLOCK BELOW ---
+                # We use printf or echo to avoid nested heredoc YAML indentation issues
+                # This constructs the email body safely within the YAML structure
+                
+                EMAIL_BODY="The automated renewal process completed successfully.\nCertificate Renewed: \"${SERVER_DOMAIN}\"\nDate: $(date)\nFull Log Message: \"$RENEWAL_SUCCESS\""
+
+                echo -e "$EMAIL_BODY" | /usr/bin/mail -s "SUCCESS: Lets Encrypt Certificate Renewed for ${SERVER_DOMAIN}" "${EMAIL_RECIPIENT}"
+                
             else
-                echo "Certbot failed with a critical error. Check logs."
+                echo "Renewal check OK. No renewal was necessary at this time, or Certbot produced no 'renewed' output."
             fi
-EOF # <--- This final EOF MUST NOT have any indentation.
+          EOF
