@@ -1,0 +1,68 @@
+# .github/workflows/cert_renewal.yml
+name: 'Bi-Weekly Let''s Encrypt Renewal Check'
+
+on:
+  # CRON Schedule: Runs every other Sunday at 3:00 AM UTC (0 3 * * 0/2)
+  schedule:
+    - cron: '0 3 * * 0/2'
+
+env:
+  # --- Replace these variables ---
+  SSH_USER: ubuntu             # or ec2-user, centos, etc.
+  SSH_HOST: 3.236.254.88      # The public IP or hostname of your external server
+  EMAIL_RECIPIENT: andrewwilliams1275@gmail.com
+  SERVER_DOMAIN: andrewwilliams.website # Domain the certificate covers
+
+jobs:
+  run-renewal-script:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Setup SSH Connection
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          # Load the Private Key from the GitHub Secret
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          
+      - name: Add External Server to Known Hosts
+        # This is essential to prevent SSH security prompts
+        run: |
+          ssh-keyscan ${{ env.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Execute Remote Renewal and Email Script
+        run: |
+          # The full command to execute on the remote server via SSH
+          ssh ${{ env.SSH_USER }}@${{ env.SSH_HOST }} 'bash -s' << 'EOF'
+            
+            # --- 1. Attempt Renewal ---
+            # 'certbot renew' only attempts renewal if the cert is due (within 30 days)
+            # The --force-renewal is NOT used; it relies on Certbot's internal logic.
+            # The --post-hook reloads Apache/Nginx ONLY if a renewal was successful.
+            sudo certbot renew --quiet --post-hook "systemctl reload apache2 || systemctl reload nginx"
+            
+            # --- 2. Check and Email Report ---
+            
+            # Check the exit status of the previous certbot command.
+            if [ $? -eq 0 ]; then
+                # Search the log for a successful renewal message.
+                # If a renewal happened, this variable will contain the success line.
+                RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" /var/log/letsencrypt/letsencrypt.log | tail -n 1)
+
+                if [ -n "$RENEWAL_SUCCESS" ]; then
+                    
+                    # Send Email using the system mail client
+                    /usr/bin/mail -s "SUCCESS: Let''s Encrypt Certificate Renewed for $SERVER_DOMAIN" \
+                        "${EMAIL_RECIPIENT}" <<MAIL_EOF
+The automated renewal process completed successfully.
+ 
+Certificate Renewed: $SERVER_DOMAIN
+Date: $(date)
+Full Log Message: $RENEWAL_SUCCESS
+MAIL_EOF
+                else
+                    echo "Renewal check OK. No renewal was necessary at this time."
+                fi
+            else
+                echo "Certbot failed with a critical error. Check logs."
+            fi
+EOF
