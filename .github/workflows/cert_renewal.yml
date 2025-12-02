@@ -11,7 +11,7 @@ env:
   SSH_USER: ubuntu             # or ec2-user, centos, etc.
   SSH_HOST: 3.236.254.88      # The public IP or hostname of your external server
   EMAIL_RECIPIENT: andrewwilliams1275@gmail.com
-  SERVER_DOMAIN: andrewwilliams.website # Domain the certificate covers
+  SERVER_DOMAIN: andrewwilliams1275@gmail.com # Domain the certificate covers
 
 jobs:
   run-renewal-script:
@@ -32,29 +32,24 @@ jobs:
       - name: Execute Remote Renewal and Email Script
         run: |
           # The full command to execute on the remote server via SSH
+          # The outer EOF is the delimiter for the SSH command input
           ssh ${{ env.SSH_USER }}@${{ env.SSH_HOST }} 'bash -s' << 'EOF'
             
             # --- 1. Attempt Renewal ---
-            # 'certbot renew' only attempts renewal if the cert is due (within 30 days)
-            # The --force-renewal is NOT used; it relies on Certbot's internal logic.
-            # The --post-hook reloads Apache/Nginx ONLY if a renewal was successful.
             sudo certbot renew --quiet --post-hook "systemctl reload apache2 || systemctl reload nginx"
             
             # --- 2. Check and Email Report ---
             
-            # Check the exit status of the previous certbot command.
             if [ $? -eq 0 ]; then
-                # Search the log for a successful renewal message.
-                # If a renewal happened, this variable will contain the success line.
                 RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" /var/log/letsencrypt/letsencrypt.log | tail -n 1)
 
                 if [ -n "$RENEWAL_SUCCESS" ]; then
                     
                     # Send Email using the system mail client
+                    # The MAIL_EOF delimiter MUST be flush left relative to the script body
                     /usr/bin/mail -s "SUCCESS: Let''s Encrypt Certificate Renewed for $SERVER_DOMAIN" \
                         "${EMAIL_RECIPIENT}" <<MAIL_EOF
 The automated renewal process completed successfully.
- 
 Certificate Renewed: $SERVER_DOMAIN
 Date: $(date)
 Full Log Message: $RENEWAL_SUCCESS
@@ -65,4 +60,4 @@ MAIL_EOF
             else
                 echo "Certbot failed with a critical error. Check logs."
             fi
-EOF
+EOF # <--- This final EOF MUST NOT have any indentation.
