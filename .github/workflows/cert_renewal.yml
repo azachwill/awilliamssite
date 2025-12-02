@@ -1,10 +1,11 @@
 # .github/workflows/cert_renewal.yml
-name: "Bi-Weekly Let's Encrypt Renewal Check"
+name: "Daily Let's Encrypt Renewal Check"
 
 on:
+  # Runs at 03:00 UTC every day
   schedule:
-    # Runs every 14 days at 03:00 UTC
     - cron: '0 3 * * *'
+  # Allows manual running via the GitHub Actions UI
   workflow_dispatch:
 
 env:
@@ -18,46 +19,58 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Setup SSH Connection
+      - name: 🔑 Setup SSH Connection
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
 
-      - name: Add External Server to Known Hosts
+      - name: 🌐 Add External Server to Known Hosts (Using Secret)
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan ${{ env.SSH_HOST }} >> ~/.ssh/known_hosts
+          # Assumes you have stored your server's public key in this secret
+          echo "${{ secrets.KNOWN_HOSTS_KEY }}" >> ~/.ssh/known_hosts
 
-      - name: Execute Remote Renewal and Email Script
+      - name: 🚀 Execute Remote Renewal and Email Script
         run: |
-          # Simplified SSH command
+          # Connect via SSH and run bash script remotely
           ssh ${{ env.SSH_USER }}@${{ env.SSH_HOST }} 'bash -s' << 'EOF'
             
-            # --- Inject GitHub/YAML Environment Variables into Shell ---
+            # Inject GitHub/YAML Environment Variables into Shell
             SERVER_DOMAIN="${{ env.SERVER_DOMAIN }}"
             EMAIL_RECIPIENT="${{ env.EMAIL_RECIPIENT }}"
             
             # --- 1. Attempt Renewal ---
             sudo certbot renew --quiet --post-hook "systemctl reload apache2 || systemctl reload nginx"
             
-            # --- 2. Check and Email Report ---
-            # Capture the return code of certbot immediately if needed, 
-            # but usually we check if the file changed or logs updated.
-            
-            # Grepping the log for specific success message
+            # --- 2. Check logs for recent renewal success ---
             RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" /var/log/letsencrypt/letsencrypt.log | tail -n 1)
 
             if [ -n "$RENEWAL_SUCCESS" ]; then
-                
-                # --- CORRECTED BLOCK BELOW ---
-                # We use printf or echo to avoid nested heredoc YAML indentation issues
-                # This constructs the email body safely within the YAML structure
-                
+                # Certificate was renewed (Success path)
+                EMAIL_SUBJECT="SUCCESS: Lets Encrypt Certificate Renewed for ${SERVER_DOMAIN}"
                 EMAIL_BODY="The automated renewal process completed successfully.\nCertificate Renewed: \"${SERVER_DOMAIN}\"\nDate: $(date)\nFull Log Message: \"$RENEWAL_SUCCESS\""
-
-                echo -e "$EMAIL_BODY" | /usr/bin/mail -s "SUCCESS: Lets Encrypt Certificate Renewed for ${SERVER_DOMAIN}" "${EMAIL_RECIPIENT}"
+                echo -e "$EMAIL_BODY" | /usr/bin/mail -s "$EMAIL_SUBJECT" "${EMAIL_RECIPIENT}"
                 
             else
-                echo "Renewal check OK. No renewal was necessary at this time, or Certbot produced no 'renewed' output."
+                # --- 3. Renewal Not Needed (Informational Email) ---
+                
+                # Get the expiration date (requires sudo)
+                # Assumes the relevant certificate is the first one found
+                EXPIRY_DATE=$(sudo certbot certificates | grep "Expiry Date" | head -n 1 | awk '{print $3}')
+                
+                if [ -n "$EXPIRY_DATE" ]; then
+                    # Calculate days remaining (requires GNU date)
+                    DAYS_LEFT=$(( ($(date -d "$EXPIRY_DATE" +%s) - $(date +%s)) / 86400 ))
+                    
+                    EMAIL_SUBJECT="INFO: Cert Renewal Check - OK for ${SERVER_DOMAIN}"
+                    EMAIL_BODY="The daily certificate check was successful.\nNo renewal was needed at this time.\n\nDays until expiration: $DAYS_LEFT days\n\nDate: $(date)"
+                    
+                    # Send informational email
+                    echo -e "$EMAIL_BODY" | /usr/bin/mail -s "$EMAIL_SUBJECT" "${EMAIL_RECIPIENT}"
+                    echo "Daily check complete. Certificate expires in $DAYS_LEFT days. Email sent."
+                else
+                    # Fallback echo if certbot output couldn't be parsed
+                    echo "Certbot ran, but could not determine expiration date."
+                fi
             fi
           EOF
