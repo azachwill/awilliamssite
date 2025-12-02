@@ -11,7 +11,7 @@ env:
   SSH_USER: ubuntu             # or ec2-user, centos, etc.
   SSH_HOST: 3.236.254.88      # The public IP or hostname of your external server
   EMAIL_RECIPIENT: andrewwilliams1275@gmail.com
-  SERVER_DOMAIN: andrewwilliams1275@gmail.com # Domain the certificate covers
+  SERVER_DOMAIN: andrewwilliams.website # Domain the certificate covers
 
 jobs:
   run-renewal-script:
