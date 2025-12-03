@@ -39,11 +39,22 @@ jobs:
             SERVER_DOMAIN="${{ env.SERVER_DOMAIN }}"
             EMAIL_RECIPIENT="${{ env.EMAIL_RECIPIENT }}"
             
-            # --- 1. Attempt Renewal ---
-            sudo certbot renew --quiet --post-hook "systemctl reload apache2 || systemctl reload nginx"
+            # --- DEFINE CUSTOM CERTBOT PATHS ---
+            # These paths must match where your certificates were installed.
+            CONFIG_PATH="/home/ubuntu/.certbot/config"
+            WORK_PATH="/home/ubuntu/.certbot/work"
+            LOGS_PATH="/home/ubuntu/.certbot/logs"
             
-            # --- 2. Check logs for recent renewal success ---
-            RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" /var/log/letsencrypt/letsencrypt.log | tail -n 1)
+            # --- 1. Attempt Renewal ---
+            # Use --config-dir, --work-dir, and --logs-dir to point Certbot to the custom location.
+            sudo certbot renew --quiet \
+                --config-dir "$CONFIG_PATH" \
+                --work-dir "$WORK_PATH" \
+                --logs-dir "$LOGS_PATH" \
+                --post-hook "systemctl reload apache2 || systemctl reload nginx"
+            
+            # --- 2. Check logs for recent renewal success (using custom log path) ---
+            RENEWAL_SUCCESS=$(grep "The following previously issued certificate has been renewed" "$LOGS_PATH/letsencrypt.log" | tail -n 1)
 
             if [ -n "$RENEWAL_SUCCESS" ]; then
                 # Certificate was renewed (Success path)
@@ -54,9 +65,8 @@ jobs:
             else
                 # --- 3. Renewal Not Needed (Informational Email) ---
                 
-                # Get the expiration date (requires sudo)
-                # Assumes the relevant certificate is the first one found
-                EXPIRY_DATE=$(sudo certbot certificates | grep "Expiry Date" | head -n 1 | awk '{print $3}')
+                # Get the expiration date (must use --config-dir here too)
+                EXPIRY_DATE=$(sudo certbot certificates --config-dir "$CONFIG_PATH" | grep "Expiry Date" | head -n 1 | awk '{print $3}')
                 
                 if [ -n "$EXPIRY_DATE" ]; then
                     # Calculate days remaining (requires GNU date)
@@ -69,8 +79,7 @@ jobs:
                     echo -e "$EMAIL_BODY" | /usr/bin/mail -s "$EMAIL_SUBJECT" "${EMAIL_RECIPIENT}"
                     echo "Daily check complete. Certificate expires in $DAYS_LEFT days. Email sent."
                 else
-                    # Fallback echo if certbot output couldn't be parsed
-                    echo "Certbot ran, but could not determine expiration date."
+                    echo "Certbot ran, but could not determine expiration date. Check if certificate is still valid in $CONFIG_PATH."
                 fi
             fi
           EOF
