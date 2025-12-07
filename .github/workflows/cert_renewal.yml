@@ -4,7 +4,7 @@ name: "Daily Let's Encrypt Renewal Check"
 on:
   # Runs at 03:00 UTC every day
   schedule:
-    - cron: '0 3 * * *'
+  #  - cron: '0 3 * * *'
   # Allows manual running via the GitHub Actions UI
   workflow_dispatch:
 
